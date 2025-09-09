@@ -1,0 +1,2 @@
+{"input": {"lcellid": 1071882, "wmac": "1c:d1:e0:ae:ca:80", "wrssi": [-80.0, -81.0, -82.0], "ipcikey": "129_2600_0_1071882"}, "answer": {"x_id": 12, "y_id": 7}}
+{"input": {"lcellid": 1071883, "wmac": "1c:d1:e0:ae:ca:81", "wrssi": [-79.0, -80.0, -81.0], "ipcikey": "129_2600_0_1071883"}, "answer": {"x_id": 13, "y_id": 8}}
