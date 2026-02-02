@@ -3,22 +3,34 @@
 ## Overview (English)
 - Fully automated LoRA tuning pipeline for Small Language Models (SLM)
 - Supports RTX 4050 (6GB VRAM), Linux/Windows, Docker
-- LoRA tuning for any Hugging Face SLM (TinyLlama, Gemma2B, Phi-2, etc.) by just entering the model name
-- Includes Docker, Hugging Face authentication, data sampling, and chat testing
-- **Note:** Model evaluation and error statistics scripts are currently not included due to instability
+- **v2.1: Hardware-aware auto-optimization** - Automatically detects GPU/VRAM and selects optimal batch size, quantization, and training parameters
+- LoRA tuning for any Hugging Face SLM (TinyLlama, Gemma2B, Phi-2, Llama, etc.) by just entering the model name
+- Includes Docker, Hugging Face authentication, experiment tracking, and chat testing
 
 ---
 
 ## Folder/File Structure
 ```
-├── train_model.py                # Universal LoRA tuning script (model name input)
-├── chat_tinyllama_lora/          # Chat-style test script
-├── train.jsonl / valid.jsonl     # Training/validation data (jsonl, prompt/completion)
+├── manager.py                    # Main CLI (v2.1) - Menu-driven interface
+├── config.yaml                   # Training configuration
+├── core/                         # Core engine modules
+│   ├── system_analyzer.py        # Hardware detection (GPU/VRAM/OS)
+│   ├── strategy.py               # Auto-optimization logic (model-size aware)
+│   ├── trainer.py                # Training executor
+│   ├── experiment_tracker.py     # Run logging and reports
+│   ├── config_loader.py          # Config merge logic
+│   ├── model_inspector.py        # LoRA target module detection
+│   └── evaluator.py              # Metrics and callbacks
+├── experiments/                  # Auto-generated per training run
+│   └── run_YYYYMMDD_HHMMSS/
+│       ├── config.json           # Settings snapshot
+│       ├── metrics.jsonl         # Per-step metrics
+│       └── training_report.md    # Summary report
+├── chat_universal_lora/          # Chat-style test script
+├── scripts/                      # Legacy scripts
 ├── requirements.txt              # Required Python packages
 ├── Dockerfile, run_docker.ps1    # Docker+GPU automation
-├── hf_login.py                   # Hugging Face token auto-login
-├── split_data.py                 # Data sampling/splitting tool (optional)
-├── convert_jsonl.py              # Data format conversion tool (optional)
+└── hf_login.py                   # Hugging Face token auto-login
 ```
 
 ---
@@ -30,7 +42,7 @@
 4. **Prepare your data:**
    - `train.jsonl` and `valid.jsonl` must be in the workspace.
    - Each line: `{ "prompt": "...", "completion": "..." }`
-   - Use `split_data.py` to sample/split data, or `convert_jsonl.py` to convert formats if needed.
+   - Also supports: `instruction/response`, `input/output`, `text` formats
 5. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
@@ -43,18 +55,67 @@
 ---
 
 ## Training Usage
-### Universal LoRA Tuning (any SLM)
+
+### Manager CLI (Recommended)
 ```bash
-python train_model.py
+python manager.py
 ```
-- Enter the model name in the terminal (e.g. `google/gemma-2b`, `TinyLlama/TinyLlama-1.1B-Chat-v1.0`)
-- Results are saved in `./<model-name>-lora/`
+Menu options:
+1. **Setup Wizard** - Create config.yaml interactively
+2. **Start Training (Auto-Optimize)** - Hardware-aware training
+3. **Manual Training** - Specify your own parameters
+4. **Manual Hardware Setup** - Override GPU detection
+5. **System Diagnostics** - View hardware info
+
+### How Auto-Optimization Works
+- Detects GPU VRAM and estimates model size from name (e.g., `gemma-2b` → 2B)
+- Calculates optimal batch size based on: `(VRAM - model_size) / context_length`
+- Selects quantization (4bit/8bit/none) based on available memory
+- Adjusts gradient accumulation to achieve target global batch size
+
+Example:
+```
+8GB VRAM + Gemma-2B → 8bit, Batch 8
+8GB VRAM + Llama-7B → 4bit, Batch 5
+24GB VRAM + Llama-7B + 2048 context → 8bit, Batch 4
+```
 
 ---
 
-## Chat-style Testing (like ChatGPT)
+## Configuration (config.yaml)
+```yaml
+model:
+  name: "google/gemma-2b"
+  output_dir: "./gemma-2b-lora"
+
+dataset:
+  train_path: "train.jsonl"
+  valid_path: "valid.jsonl"
+  rows: 1000  # Approximate count for optimizer
+
+training:
+  per_device_train_batch_size: "auto"
+  gradient_accumulation_steps: "auto"
+  quantization: "auto"  # 4bit, 8bit, or none
+  num_train_epochs: "auto"
+  max_length: 512
+```
+
+Set any value to `"auto"` to let the system decide, or specify manually.
+
+---
+
+## Experiment Tracking
+Each training run automatically creates:
+- `experiments/run_YYYYMMDD_HHMMSS/config.json` - Full settings
+- `experiments/run_YYYYMMDD_HHMMSS/metrics.jsonl` - Loss, PPL per step
+- `experiments/run_YYYYMMDD_HHMMSS/training_report.md` - Summary
+
+---
+
+## Chat-style Testing
 ```bash
-python chat_tinyllama_lora/chat_tinyllama_lora.py
+python chat_universal_lora/chat_universal_lora.py
 ```
 - Enter prompt → Model generates a response
 
@@ -68,18 +129,29 @@ python chat_tinyllama_lora/chat_tinyllama_lora.py
 
 ---
 
-## Data Tools
-- `split_data.py`: Randomly sample or split your dataset for training/validation.
-- `convert_jsonl.py`: Convert your data to the required jsonl format if needed.
-- `hf_login.py`: Hugging Face token auto-login (required for downloading gated models).
+## Tips
+- If GPU detection fails, use menu option #4 to manually set VRAM
+- Use `--manual-vram` flag: `python core/system_analyzer.py --manual-vram 8`
+- GPU info is cached in `~/.slmtunner_cache.json` for fallback
+- If you get OOM (out of memory), reduce max_length or use smaller model
+- Set environment variable for memory management:
+  ```powershell
+  $env:PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+  ```
 
 ---
 
-## Tips
-- If you get OOM (out of memory), reduce batch size, max_length, or epoch in `train_model.py`.
-- LoRA tuning is automated for any SLM by just entering the model name.
-- Use adapter_model.safetensors, tokenizer, etc. in the result folder for inference or deployment.
-- Easily extensible for evaluation, inference, chat, or deployment.
+## LoRA Tuning Error Troubleshooting (CUDA OOM)
+If you see an error like:
+```
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate ...
+```
+
+**Solutions:**
+1. Lower `max_length` in config.yaml (512 → 256)
+2. Use 4bit quantization
+3. Reduce batch size
+4. Set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
 
 ---
 
@@ -88,23 +160,9 @@ python chat_tinyllama_lora/chat_tinyllama_lora.py
 ## 개요
 - 초소형 언어모델(SLM) LoRA 튜닝 전체 자동화 파이프라인
 - RTX 4050(6GB VRAM) 및 리눅스/윈도우 환경 지원
-- TinyLlama, Gemma2B, Phi-2 등 다양한 모델명 입력만으로 LoRA 튜닝 가능
-- Docker, Hugging Face 인증, 데이터 샘플링, 채팅 테스트 등 통합
-- **참고:** 모델 평가 및 오차 통계 스크립트는 현재 오류로 미포함
-
----
-
-## 폴더/파일 구조
-```
-├── train_model.py                # 모델명 입력받아 LoRA 튜닝 (자동 저장)
-├── chat_tinyllama_lora/          # 대화형 테스트 스크립트
-├── train.jsonl / valid.jsonl     # 학습/검증 데이터 (jsonl, prompt/completion)
-├── requirements.txt              # 필수 패키지 목록
-├── Dockerfile, run_docker.ps1    # Docker+GPU 자동화 환경
-├── hf_login.py                   # Hugging Face 토큰 자동 로그인
-├── split_data.py                 # 데이터 샘플링/분할 툴 (옵션)
-├── convert_jsonl.py              # 데이터 포맷 변환 툴 (옵션)
-```
+- **v2.1: 하드웨어 인식 자동 최적화** - GPU/VRAM 감지 후 최적 배치 크기, 양자화, 학습 파라미터 자동 선택
+- TinyLlama, Gemma2B, Phi-2, Llama 등 다양한 모델명 입력만으로 LoRA 튜닝 가능
+- Docker, Hugging Face 인증, 실험 추적, 채팅 테스트 등 통합
 
 ---
 
@@ -115,7 +173,7 @@ python chat_tinyllama_lora/chat_tinyllama_lora.py
 4. **데이터 준비:**
    - `train.jsonl`, `valid.jsonl` 파일을 작업 폴더에 준비
    - 각 줄: `{ "prompt": "...", "completion": "..." }` 형식
-   - 필요시 `split_data.py`로 샘플링/분할, `convert_jsonl.py`로 포맷 변환
+   - `instruction/response`, `input/output`, `text` 형식도 지원
 5. **필수 패키지 설치:**
    ```bash
    pip install -r requirements.txt
@@ -128,75 +186,47 @@ python chat_tinyllama_lora/chat_tinyllama_lora.py
 ---
 
 ## 학습 실행 방법
+
+### Manager CLI (권장)
 ```bash
-python train_model.py
+python manager.py
 ```
-- 실행 후 터미널에 모델명 입력 (예: `google/gemma-2b`, `TinyLlama/TinyLlama-1.1B-Chat-v1.0`)
-- 결과는 `./모델명-lora/` 폴더에 저장
+메뉴:
+1. **Setup Wizard** - config.yaml 대화형 생성
+2. **Start Training (Auto-Optimize)** - 하드웨어 인식 자동 학습
+3. **Manual Training** - 수동 파라미터 지정
+4. **Manual Hardware Setup** - GPU 감지 수동 오버라이드
+5. **System Diagnostics** - 하드웨어 정보 확인
+
+### 자동 최적화 동작 원리
+- GPU VRAM 감지 및 모델 이름에서 크기 추정 (예: `gemma-2b` → 2B)
+- 최적 배치 크기 계산: `(VRAM - 모델크기) / 컨텍스트길이`
+- 가용 메모리 기반 양자화 선택 (4bit/8bit/none)
+- 목표 글로벌 배치 크기 달성을 위한 gradient accumulation 조정
+
+예시:
+```
+8GB VRAM + Gemma-2B → 8bit, Batch 8
+8GB VRAM + Llama-7B → 4bit, Batch 5
+24GB VRAM + Llama-7B + 2048 컨텍스트 → 8bit, Batch 4
+```
 
 ---
 
-## 대화형 테스트 (ChatGPT 스타일)
-```bash
-python chat_tinyllama_lora/chat_tinyllama_lora.py
-```
-- 프롬프트 입력 → 모델 답변 출력
-
----
-
-## Docker 사용 (옵션)
-```powershell
-./run_docker.ps1
-```
-- CUDA, bitsandbytes, peft 등 자동 환경 구축 및 실행
-
----
-
-## 데이터 툴 안내
-- `split_data.py`: 학습/검증 데이터 샘플링, 분할용
-- `convert_jsonl.py`: 데이터 포맷(json/csv 등 → jsonl) 변환용
-- `hf_login.py`: Hugging Face 토큰 자동 로그인(게이트 모델 다운로드 필수)
+## 실험 추적
+각 학습 실행 시 자동 생성:
+- `experiments/run_YYYYMMDD_HHMMSS/config.json` - 전체 설정
+- `experiments/run_YYYYMMDD_HHMMSS/metrics.jsonl` - 스텝별 Loss, PPL
+- `experiments/run_YYYYMMDD_HHMMSS/training_report.md` - 요약 리포트
 
 ---
 
 ## 참고/팁
-- VRAM 부족(OOM) 시 train_model.py에서 batch size, max_length, epoch 등 조정
-- 다양한 SLM 모델명 입력만으로 LoRA 튜닝 자동화
-- 결과 폴더 내 adapter_model.safetensors, tokenizer 등 활용
-- 평가/추론/채팅/배포 등 확장 가능
-
----
-
-## LoRA Tuning Error Troubleshooting (CUDA OOM)
-If you see an error like:
-```
-torch.OutOfMemoryError: CUDA out of memory. Tried to allocate ...
-```
-This means the model, input, optimizer, and intermediate tensors exceed your GPU memory.
-
-**Tip:**
-Set the following environment variable to let PyTorch manage memory more flexibly and reduce fragmentation errors:
-
-**Linux/macOS:**
-```bash
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-```
-**Windows PowerShell:**
-```powershell
-$env:PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
-```
-
-- You can set this before running your training script.
-- If OOM persists, reduce batch size, max_length, or use a smaller model.
-
----
-
-## 기타 실전 팁 (KOR)
-- torch.OutOfMemoryError: CUDA out of memory 오류 발생 시, 위 환경변수 설정을 추천합니다.
-- 그래도 해결되지 않으면 batch size, max_length, epoch, 모델 크기를 줄이세요.
-- Docker 컨테이너에서 환경변수는 run 명령에 --env 옵션으로도 전달 가능합니다.
-- Windows PowerShell에서는 `$env:PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"`로 설정 후 python 명령 실행.
-- VRAM 사용량은 nvidia-smi로 실시간 확인 가능.
-- 데이터가 너무 크면 split_data.py로 샘플링/분할하여 실험하세요.
-- Hugging Face 토큰 인증은 최초 1회만 필요, 이후 캐시됨.
-
+- GPU 감지 실패 시 메뉴 #4로 VRAM 수동 설정
+- `--manual-vram` 플래그 사용: `python core/system_analyzer.py --manual-vram 8`
+- GPU 정보는 `~/.slmtunner_cache.json`에 캐시됨
+- OOM 발생 시 max_length 줄이거나 작은 모델 사용
+- 메모리 관리 환경변수 설정:
+  ```powershell
+  $env:PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+  ```

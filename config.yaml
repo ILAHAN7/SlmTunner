@@ -1,0 +1,32 @@
+# SlmTunner 2.1 Configuration File
+# https://github.com/ILAHAN7/SlmTunner
+
+model:
+  # HuggingFace model name (used for size estimation)
+  name: "google/gemma-2b"
+  # Output directory for LoRA adapter
+  output_dir: "./gemma-2b-lora"
+
+dataset:
+  train_path: "train.jsonl"
+  valid_path: "valid.jsonl"
+  # Approximate row count (helps optimizer decide batch/epoch)
+  rows: 1000
+
+training:
+  # "auto" = let SlmTunner decide based on hardware
+  # Or set specific values to override
+  
+  per_device_train_batch_size: "auto"   # 1-16
+  gradient_accumulation_steps: "auto"   # 1-64
+  quantization: "auto"                  # "4bit", "8bit", or "none"
+  num_train_epochs: "auto"              # 1-10
+  
+  # Context length (affects VRAM usage significantly)
+  max_length: 512                       # 512, 1024, 2048
+  
+  # Advanced (uncomment to override)
+  # learning_rate: 2e-4
+  # lora_r: 16
+  # lora_alpha: 32
+  # warmup_ratio: 0.03

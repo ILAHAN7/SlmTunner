@@ -5,4 +5,8 @@ datasets>=2.18.0
 torch>=2.1.0
 tqdm
 evaluate
-
+scipy
+accelerate>=0.28.0
+psutil
+pyyaml
+scikit-learn
