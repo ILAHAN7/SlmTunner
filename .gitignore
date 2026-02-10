@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Environment Variables (NEVER commit secrets)
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Project-specific
+experiments/
+*.lora/
+*-lora/
+test_experiments/
+
+# GPU cache
+.slmtunner_cache.json
+
+# Model outputs
+*.safetensors
+*.bin
+*.pt
+
+# Training data (user-provided)
+train.jsonl
+valid.jsonl
+
+# Logs
+*.log

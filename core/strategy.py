@@ -1,5 +1,6 @@
 import logging
 import math
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -25,25 +26,72 @@ class OptimizationStrategy:
     def estimate_model_size(model_name: str) -> float:
         """
         Estimate model size in billions from model name.
-        Returns conservative estimate if unknown.
+        Uses multiple strategies: HF config lookup > regex parsing > known patterns > default.
         """
         model_lower = model_name.lower()
         
-        # Common patterns: "7b", "2b", "13b", etc.
-        import re
-        match = re.search(r'(\d+\.?\d*)b', model_lower)
-        if match:
-            return float(match.group(1))
+        # 1. Known model families (explicit mapping takes priority)
+        KNOWN_MODELS = {
+            "tinyllama": 1.1,
+            "phi-1": 1.3,
+            "phi-1_5": 1.3,
+            "phi-2": 2.7,
+            "phi-3-mini": 3.8,
+            "phi-3-small": 7.0,
+            "phi-3-medium": 14.0,
+            "stablelm-2-zephyr": 1.6,
+            "opt-125m": 0.125,
+            "opt-350m": 0.35,
+            "opt-1.3b": 1.3,
+            "pythia-70m": 0.07,
+            "pythia-160m": 0.16,
+            "pythia-410m": 0.41,
+            "pythia-1b": 1.0,
+        }
         
-        # Known models without size in name
-        if "gemma-2" in model_lower or "gemma2" in model_lower:
-            return 2.0
-        if "phi" in model_lower:
-            return 2.7
-        if "tinyllama" in model_lower:
-            return 1.1
+        for pattern, size in KNOWN_MODELS.items():
+            if pattern in model_lower:
+                logger.info(f"Model '{model_name}' matched known pattern '{pattern}' -> {size}B")
+                return size
         
-        # Conservative default for unknown models
+        # 2. Regex: find ALL occurrences of XB pattern and pick the most likely one
+        # Match patterns like "7b", "2b", "13b", "1.1b", "70b"
+        matches = re.findall(r'(?:^|[\-_/])(\d+\.?\d*)b(?:[\-_/]|$)', model_lower)
+        if matches:
+            # Use the largest match (most likely the param count, not version number)
+            sizes = [float(m) for m in matches]
+            best = max(sizes)
+            logger.info(f"Model '{model_name}' regex matched -> {best}B")
+            return best
+        
+        # 3. Also check for million-scale patterns (e.g., "125m", "350m")
+        m_matches = re.findall(r'(?:^|[\-_/])(\d+)m(?:[\-_/]|$)', model_lower)
+        if m_matches:
+            best_m = max(int(m) for m in m_matches) / 1000.0
+            logger.info(f"Model '{model_name}' regex matched -> {best_m}B (from M params)")
+            return best_m
+        
+        # 4. Try HuggingFace AutoConfig (requires network, optional)
+        try:
+            from transformers import AutoConfig
+            config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+            # Some configs have num_parameters directly
+            if hasattr(config, 'num_parameters'):
+                size_b = config.num_parameters / 1e9
+                logger.info(f"Model '{model_name}' from HF config -> {size_b:.1f}B")
+                return size_b
+            # Estimate from hidden_size * num_layers (crude but better than nothing)
+            if hasattr(config, 'hidden_size') and hasattr(config, 'num_hidden_layers'):
+                # Very rough: params ≈ 12 * L * d^2 (transformer scaling rule)
+                d = config.hidden_size
+                L = config.num_hidden_layers
+                estimated = 12 * L * (d ** 2) / 1e9
+                logger.info(f"Model '{model_name}' estimated from architecture -> {estimated:.1f}B")
+                return estimated
+        except Exception as e:
+            logger.debug(f"HF config lookup failed for '{model_name}': {e}")
+        
+        # 5. Conservative default
         logger.warning(f"Could not determine size for '{model_name}'. Assuming 7B (conservative).")
         return 7.0
 

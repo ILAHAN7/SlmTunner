@@ -7,7 +7,7 @@ import logging
 import argparse
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Note: logging.basicConfig is configured in manager.py (entrypoint)
 logger = logging.getLogger(__name__)
 
 # Cache file location
@@ -19,7 +19,7 @@ def load_cached_gpu_info():
         try:
             with open(CACHE_FILE, 'r') as f:
                 return json.load(f)
-        except:
+        except (json.JSONDecodeError, IOError, OSError):
             pass
     return None
 

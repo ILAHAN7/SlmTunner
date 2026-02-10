@@ -23,27 +23,37 @@ class ModelInspector:
 
             # 1. Llama, Mistral, Gemma, Qwen family (Standard Linear Layers)
             if any(k in model_type for k in ["llama", "mistral", "gemma", "qwen", "yi"]):
-                # For basic tuning, q+v is enough. For better quality, include k+o.
-                # Returning standard 4-module set for optimal performance
                 return ["q_proj", "k_proj", "v_proj", "o_proj"]
             
-            # 2. Bloom (Fused QKV)
+            # 2. Phi family (varies by version)
+            if "phi" in model_type:
+                # Phi-1/2 use q_proj/v_proj, Phi-3/3.5 use qkv_proj
+                if hasattr(config, 'hidden_size') and config.hidden_size >= 3072:
+                    # Phi-3+: fused QKV
+                    return ["qkv_proj", "o_proj"]
+                return ["q_proj", "k_proj", "v_proj", "dense"]
+            
+            # 3. Bloom (Fused QKV)
             if "bloom" in model_type:
                 return ["query_key_value"]
             
-            # 3. Falcon (Fused QKV)
+            # 4. Falcon (Fused QKV)
             if "falcon" in model_type:
                 return ["query_key_value"]
             
-            # 4. GPT-NeoX / Pythia
+            # 5. GPT-NeoX / Pythia
             if "gpt_neox" in model_type:
                 return ["query_key_value"]
+            
+            # 6. GPT-2 / StableLM
+            if any(k in model_type for k in ["gpt2", "stablelm"]):
+                return ["c_attn"]
                 
-            # 5. T5 / Flan-T5
+            # 7. T5 / Flan-T5
             if "t5" in model_type:
                 return ["q", "v"]
             
-            # 6. BERT / RoBERTa (Encoder only - rare for SLM generation but possible)
+            # 8. BERT / RoBERTa (Encoder only - rare for SLM generation but possible)
             if "bert" in model_type:
                 return ["query", "value"]
 

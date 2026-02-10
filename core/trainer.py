@@ -12,8 +12,10 @@ from transformers import (
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, TaskType
 from datasets import load_dataset
 from .model_inspector import ModelInspector
-from .evaluator import LoggingCallback, TrackingCallback
+from .evaluator import SlmEvaluator, LoggingCallback, TrackingCallback
 from .experiment_tracker import ExperimentTracker
+from .data_validator import DataValidator
+from .constants import PROMPT_KEYS, COMPLETION_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +39,12 @@ class SlmTrainer:
             self._run_training()
         except Exception as e:
             self.tracker.end_run({"status": "failed", "error": str(e)})
-            raise e
+            raise
+        finally:
+            # Always clean up GPU memory
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logger.info("GPU memory cache cleared.")
         
     def _run_training(self):
         # 1. Quantization Config
@@ -91,7 +98,7 @@ class SlmTrainer:
             r=self.config.get("lora_r", 16),
             lora_alpha=self.config.get("lora_alpha", 32),
             target_modules=target_modules,
-            lora_dropout=0.05,
+            lora_dropout=self.config.get("lora_dropout", 0.05),
             bias="none",
             task_type=TaskType.CAUSAL_LM
         )
@@ -103,6 +110,16 @@ class SlmTrainer:
         data_files = {}
         train_path = self.config.get("train_path", "train.jsonl")
         valid_path = self.config.get("valid_path", "valid.jsonl")
+        
+        # Pre-training data validation
+        logger.info("Validating dataset files...")
+        validation_report = DataValidator.validate(train_path, valid_path)
+        if not validation_report["valid"]:
+            DataValidator.print_report(validation_report)
+            raise ValueError("Dataset validation failed. Fix errors above before training.")
+        if validation_report["warnings"]:
+            for warn in validation_report["warnings"]:
+                logger.warning(warn)
         
         if os.path.exists(train_path): 
             data_files["train"] = train_path
@@ -118,19 +135,16 @@ class SlmTrainer:
         
         # Flexible column mapping
         def format_example(example):
-            # Try common column name patterns
-            prompt_keys = ["prompt", "instruction", "input", "question"]
-            completion_keys = ["completion", "response", "output", "answer"]
-            
+            # Use shared column name constants
             prompt = ""
             completion = ""
             
-            for key in prompt_keys:
+            for key in PROMPT_KEYS:
                 if key in example:
                     prompt = example[key]
                     break
             
-            for key in completion_keys:
+            for key in COMPLETION_KEYS:
                 if key in example:
                     completion = example[key]
                     break
@@ -154,14 +168,20 @@ class SlmTrainer:
             result["labels"] = result["input_ids"].copy()
             return result
         
+        # Windows does not support num_proc > 1 for dataset.map reliably
+        map_num_proc = 1 if os.name == 'nt' else min(4, os.cpu_count() or 1)
+        
         tokenized_dataset = dataset.map(
             tokenize_function,
             batched=True,
-            num_proc=min(4, os.cpu_count() or 1),
+            num_proc=map_num_proc,
             remove_columns=dataset["train"].column_names
         )
 
         # 5. Training Arguments
+        use_fp16 = self.config.get("fp16", True) and torch.cuda.is_available()
+        has_eval = tokenized_dataset.get("validation") is not None
+        
         training_args = TrainingArguments(
             output_dir=self.output_dir,
             per_device_train_batch_size=self.config.get("per_device_train_batch_size", 1),
@@ -171,14 +191,17 @@ class SlmTrainer:
             num_train_epochs=self.config.get("num_train_epochs", 1),
             save_steps=100,
             save_total_limit=2,
-            fp16=self.config.get("fp16", True),
+            fp16=use_fp16,
             gradient_checkpointing=self.config.get("gradient_checkpointing", True),
             report_to="none",
             dataloader_num_workers=self.config.get("dataloader_num_workers", 0),
-            ddp_find_unused_parameters=False if torch.cuda.device_count() > 1 else None,
+            ddp_find_unused_parameters=False if torch.cuda.is_available() and torch.cuda.device_count() > 1 else None,
             warmup_ratio=0.03,
             lr_scheduler_type="cosine",
             resume_from_checkpoint=self._find_checkpoint(),
+            # Evaluation config
+            eval_strategy="epoch" if has_eval else "no",
+            per_device_eval_batch_size=self.config.get("per_device_train_batch_size", 1),
         )
 
         trainer = Trainer(
@@ -187,6 +210,8 @@ class SlmTrainer:
             train_dataset=tokenized_dataset["train"],
             eval_dataset=tokenized_dataset.get("validation"),
             data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
+            compute_metrics=SlmEvaluator.compute_metrics,
+            preprocess_logits_for_metrics=SlmEvaluator.preprocess_logits_for_metrics,
             callbacks=[
                 LoggingCallback(),
                 TrackingCallback(self.tracker)
@@ -237,4 +262,4 @@ if __name__ == "__main__":
         
     except Exception as e:
         logger.error(f"Training failed: {e}")
-        raise e
+        raise

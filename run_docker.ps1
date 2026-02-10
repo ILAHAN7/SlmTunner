@@ -1,6 +1,13 @@
-# 빌드: PowerShell에서 실행
-cd C:/Users/USER/Desktop/tet
+# SlmTunner Docker GPU Training Script
+# Run from the project root directory
 
-docker build -t slm-train-gpu .
+$ProjectRoot = $PSScriptRoot
 
-docker run --gpus all --memory=32g -it --rm -v ${PWD}:/workspace slm-train-gpu /bin/bash
+Write-Host ">> Building SlmTunner Docker image..."
+docker build -t slmtunner-gpu $ProjectRoot
+
+Write-Host ">> Running container with GPU support..."
+docker run --gpus all --memory=32g -it --rm `
+    -v "${ProjectRoot}:/workspace" `
+    --env-file "${ProjectRoot}/.env" `
+    slmtunner-gpu /bin/bash
