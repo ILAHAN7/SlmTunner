@@ -1,5 +1,5 @@
-# SLM LoRA Tuning Pipeline (TinyLlama, Gemma2B, etc.)
-
+# SLM LoRA Tuner (TinyLlama, Gemma2B, etc.)
+This is open part of the : Small LLM Fine-tuning & Evaluation team project
 ## Overview (English)
 - Fully automated LoRA tuning pipeline for Small Language Models (SLM)
 - Supports RTX 4050 (6GB VRAM), Linux/Windows, Docker
@@ -282,3 +282,4 @@ python manager.py
   ```powershell
   $env:PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
   ```
+
